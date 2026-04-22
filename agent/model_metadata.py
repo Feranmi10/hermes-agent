@@ -4,7 +4,6 @@ Pure utility functions with no AIAgent dependency. Used by ContextCompressor
 and run_agent.py for pre-flight context checks.
 """
 
-import ipaddress
 import logging
 import re
 import time
@@ -50,13 +49,6 @@ _OLLAMA_TAG_PATTERN = re.compile(
     r"^(\d+\.?\d*b|latest|stable|q\d|fp?\d|instruct|chat|coder|vision|text)",
     re.IGNORECASE,
 )
-
-
-# Tailscale's CGNAT range (RFC 6598). `ipaddress.is_private` excludes this
-# block, so without an explicit check Ollama reached over Tailscale (e.g.
-# `http://100.77.243.5:11434`) wouldn't be treated as local and its stream
-# read / stale timeouts wouldn't get auto-bumped. Built once at import time.
-_TAILSCALE_CGNAT = ipaddress.IPv4Network("100.64.0.0/10")
 
 
 def _strip_provider_prefix(model: str) -> str:
@@ -133,6 +125,8 @@ DEFAULT_CONTEXT_LENGTHS = {
     # Google
     "gemini": 1048576,
     # Gemma (open models served via AI Studio)
+    "gemma-4": 262144,           # Gemma 4 family
+    "gemma4": 262144,            # Ollama-style naming (e.g., gemma4:31b-cloud)
     "gemma-4-31b": 256000,
     "gemma-3": 131072,
     "gemma": 8192,  # fallback for older gemma models
@@ -291,15 +285,7 @@ def _is_known_provider_base_url(base_url: str) -> bool:
 
 
 def is_local_endpoint(base_url: str) -> bool:
-    """Return True if base_url points to a local machine.
-
-    Recognises loopback (``localhost``, ``127.0.0.0/8``, ``::1``),
-    container-internal DNS names (``host.docker.internal`` et al.),
-    RFC-1918 private ranges (``10/8``, ``172.16/12``, ``192.168/16``),
-    link-local, and Tailscale CGNAT (``100.64.0.0/10``). Tailscale CGNAT
-    is included so remote-but-trusted Ollama boxes reached over a
-    Tailscale mesh get the same timeout auto-bumps as localhost Ollama.
-    """
+    """Return True if base_url points to a local machine (localhost / RFC-1918 / WSL)."""
     normalized = _normalize_base_url(base_url)
     if not normalized:
         return False
@@ -314,17 +300,14 @@ def is_local_endpoint(base_url: str) -> bool:
     # Docker / Podman / Lima internal DNS names (e.g. host.docker.internal)
     if any(host.endswith(suffix) for suffix in _CONTAINER_LOCAL_SUFFIXES):
         return True
-    # RFC-1918 private ranges, link-local, and Tailscale CGNAT
+    # RFC-1918 private ranges and link-local
+    import ipaddress
     try:
         addr = ipaddress.ip_address(host)
-        if addr.is_private or addr.is_loopback or addr.is_link_local:
-            return True
-        if isinstance(addr, ipaddress.IPv4Address) and addr in _TAILSCALE_CGNAT:
-            return True
+        return addr.is_private or addr.is_loopback or addr.is_link_local
     except ValueError:
         pass
     # Bare IP that looks like a private range (e.g. 172.26.x.x for WSL)
-    # or Tailscale CGNAT (100.64.x.x–100.127.x.x).
     parts = host.split(".")
     if len(parts) == 4:
         try:
@@ -334,8 +317,6 @@ def is_local_endpoint(base_url: str) -> bool:
             if first == 172 and 16 <= second <= 31:
                 return True
             if first == 192 and second == 168:
-                return True
-            if first == 100 and 64 <= second <= 127:
                 return True
         except ValueError:
             pass
