@@ -26,6 +26,9 @@ PLATFORM_MAP = {
 
 EXCLUDED_SKILL_DIRS = frozenset((".git", ".github", ".hub"))
 
+# Must match MAX_DESCRIPTION_LENGTH in tools/skills_tool.py.
+MAX_DESCRIPTION_LENGTH = 1024
+
 # ── Lazy YAML loader ─────────────────────────────────────────────────────
 
 _yaml_load_fn = None
@@ -421,8 +424,8 @@ def extract_skill_description(frontmatter: Dict[str, Any]) -> str:
     if not raw_desc:
         return ""
     desc = str(raw_desc).strip().strip("'\"")
-    if len(desc) > 60:
-        return desc[:57] + "..."
+    if len(desc) > MAX_DESCRIPTION_LENGTH:
+        return desc[:MAX_DESCRIPTION_LENGTH - 3] + "..."
     return desc
 
 
