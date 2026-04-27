@@ -414,6 +414,63 @@ def save_permanent_allowlist(patterns: set):
 # Approval prompting + orchestration
 # =========================================================================
 
+def _try_pt_run_in_terminal(func: "Callable[[], None]",
+                             timeout: "int | None") -> "bool | None":
+    """Route *func* through prompt_toolkit's run_in_terminal from a background thread.
+
+    When prompt_toolkit's Application.run() owns stdin on the main thread,
+    calling input() from a background thread deadlocks because both compete
+    for the same file descriptor.  This helper detects a live Application via
+    its ContextVar (copied to child threads at Thread.start() time), schedules
+    func inside run_in_terminal on the event loop via
+    asyncio.run_coroutine_threadsafe, then blocks on a threading.Event until
+    the user responds or the timeout expires.
+
+    Inside run_in_terminal prompt_toolkit detaches its own input reader and
+    restores the terminal to cooked mode, so input() in func receives
+    keystrokes without competing with the Application.
+
+    Returns:
+        True  – func ran to completion through prompt_toolkit
+        False – prompt_toolkit was active but the wait timed out
+        None  – no live Application found; caller should fall back to the
+                direct daemon-thread + input() path
+    """
+    import asyncio
+
+    try:
+        from prompt_toolkit.application import get_app  # type: ignore[import]
+    except ImportError:
+        return None
+
+    try:
+        app = get_app()
+    except RuntimeError:
+        return None  # No Application bound in this context
+
+    # Prefer the private _loop set by Application.run_async(); no public
+    # .loop attribute exists in all prompt_toolkit releases.
+    loop: "asyncio.AbstractEventLoop | None" = (
+        getattr(app, "_loop", None) or getattr(app, "loop", None)
+    )
+    if loop is None or not loop.is_running():
+        return None
+
+    done = threading.Event()
+
+    async def _schedule() -> None:
+        try:
+            # Non-executor path: run_in_terminal detaches prompt_toolkit's
+            # stdin reader and sets cooked mode before calling func(), so
+            # input() inside func works without racing the Application.
+            await app.run_in_terminal(func)
+        finally:
+            done.set()
+
+    asyncio.run_coroutine_threadsafe(_schedule(), loop)
+    return done.wait(timeout=timeout)  # True = completed, False = timed out
+
+
 def prompt_dangerous_approval(command: str, description: str,
                               timeout_seconds: int | None = None,
                               allow_permanent: bool = True,
@@ -444,33 +501,59 @@ def prompt_dangerous_approval(command: str, description: str,
     os.environ["HERMES_SPINNER_PAUSE"] = "1"
     try:
         while True:
-            print()
-            print(f"  ⚠️  DANGEROUS COMMAND: {description}")
-            print(f"      {command}")
-            print()
-            if allow_permanent:
-                print("      [o]nce  |  [s]ession  |  [a]lways  |  [d]eny")
-            else:
-                print("      [o]nce  |  [s]ession  |  [d]eny")
-            print()
-            sys.stdout.flush()
+            prompt_text = (
+                "      Choice [o/s/a/D]: " if allow_permanent
+                else "      Choice [o/s/D]: "
+            )
+            result: dict[str, str] = {"choice": ""}
 
-            result = {"choice": ""}
+            def _print_approval_prompt() -> None:
+                print()
+                print(f"  ⚠️  DANGEROUS COMMAND: {description}")
+                print(f"      {command}")
+                print()
+                if allow_permanent:
+                    print("      [o]nce  |  [s]ession  |  [a]lways  |  [d]eny")
+                else:
+                    print("      [o]nce  |  [s]ession  |  [d]eny")
+                print()
+                sys.stdout.flush()
 
-            def get_input():
+            def _read_approval_input() -> None:
                 try:
-                    prompt = "      Choice [o/s/a/D]: " if allow_permanent else "      Choice [o/s/D]: "
-                    result["choice"] = input(prompt).strip().lower()
+                    result["choice"] = input(prompt_text).strip().lower()
                 except (EOFError, OSError):
                     result["choice"] = ""
 
-            thread = threading.Thread(target=get_input, daemon=True)
-            thread.start()
-            thread.join(timeout=timeout_seconds)
+            def _prompt_and_read() -> None:
+                _print_approval_prompt()
+                _read_approval_input()
 
-            if thread.is_alive():
+            # When prompt_toolkit's Application.run() is active on the main
+            # thread, calling input() from a background thread deadlocks
+            # because both compete for stdin (#15216).  Route the entire
+            # print + input sequence through run_in_terminal, which detaches
+            # prompt_toolkit's stdin reader and restores cooked mode before
+            # input() is called.  The ContextVar _current_app is inherited
+            # by child threads (via copy_context() at Thread.start()), so
+            # get_app() works correctly from subagent threads too.
+            pt_result = _try_pt_run_in_terminal(_prompt_and_read, timeout_seconds)
+
+            if pt_result is None:
+                # No active Application – safe to print directly and block a
+                # daemon thread on input() with a timeout join.
+                _print_approval_prompt()
+                thread = threading.Thread(target=_read_approval_input, daemon=True)
+                thread.start()
+                thread.join(timeout=timeout_seconds)
+                if thread.is_alive():
+                    print("\n      ⏱ Timeout - denying command")
+                    return "deny"
+            elif not pt_result:
+                # Application was active but the wait timed out.
                 print("\n      ⏱ Timeout - denying command")
                 return "deny"
+            # pt_result is True: _read_approval_input() ran, result["choice"] is set.
 
             choice = result["choice"]
             if choice in ('o', 'once'):
