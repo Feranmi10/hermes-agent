@@ -291,6 +291,16 @@ def claw_command(args):
     elif action in ("cleanup", "clean"):
         _cmd_cleanup(args)
     else:
+        openclaw_dirs = _find_openclaw_dirs()
+        if openclaw_dirs:
+            path = openclaw_dirs[0]
+            print_info(
+                f"A legacy OpenClaw directory was detected at {path}. "
+                "To migrate your config and skills to Hermes, run "
+                "hermes claw migrate. Run hermes claw migrate --dry-run "
+                "to preview changes first."
+            )
+            print()
         print("Usage: hermes claw <command> [options]")
         print()
         print("Commands:")
