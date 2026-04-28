@@ -512,6 +512,22 @@ def acquire_scoped_lock(scope: str, identity: str, metadata: Optional[dict[str, 
                     and current_start != existing.get("start_time")
                 ):
                     stale = True
+                # start_time was not recorded — cannot detect PID reuse via
+                # kernel timestamps (common on macOS where /proc is absent).
+                # Fall back to the live process command line: if it does not
+                # contain "hermes" or "hermes_cli" the PID has been recycled
+                # by the OS for an unrelated process.
+                if not stale and existing.get("start_time") is None:
+                    cmdline = _read_process_cmdline(existing_pid)
+                    if cmdline is None:
+                        try:
+                            import psutil  # optional dependency
+                            _parts = psutil.Process(existing_pid).cmdline()
+                            cmdline = " ".join(_parts) if _parts else None
+                        except Exception:
+                            cmdline = None
+                    if cmdline is not None and "hermes" not in cmdline and "hermes_cli" not in cmdline:
+                        stale = True
                 # Check if process is stopped (Ctrl+Z / SIGTSTP) — stopped
                 # processes still respond to os.kill(pid, 0) but are not
                 # actually running. Treat them as stale so --replace works.
