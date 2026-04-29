@@ -2906,9 +2906,14 @@ def _model_flow_named_custom(config, provider_info):
     saved_model = provider_info.get("model", "")
     provider_key = (provider_info.get("provider_key") or "").strip()
 
-    # Resolve key from env var if api_key not set directly
+    # Resolve key from env var if api_key not set directly.
+    # Track whether the key came from the environment so we never persist the
+    # resolved secret back to disk — key_env is the on-disk pointer; the
+    # plaintext value must only travel in memory.
+    _key_from_env = False
     if not api_key and key_env:
         api_key = os.environ.get(key_env, "")
+        _key_from_env = bool(api_key)
 
     print(f"  Provider: {name}")
     print(f"  URL:      {base_url}")
@@ -3005,7 +3010,7 @@ def _model_flow_named_custom(config, provider_info):
     else:
         model["provider"] = "custom"
         model["base_url"] = base_url
-        if api_key:
+        if api_key and not _key_from_env:
             model["api_key"] = api_key
     # Apply api_mode from custom_providers entry, or clear stale value
     custom_api_mode = provider_info.get("api_mode", "")
@@ -3024,15 +3029,16 @@ def _model_flow_named_custom(config, provider_info):
             provider_entry = providers_cfg.get(provider_key)
             if isinstance(provider_entry, dict):
                 provider_entry["default_model"] = model_name
-                if api_key and not str(provider_entry.get("api_key", "") or "").strip():
+                if api_key and not _key_from_env and not str(provider_entry.get("api_key", "") or "").strip():
                     provider_entry["api_key"] = api_key
                 if key_env and not str(provider_entry.get("key_env", "") or "").strip():
                     provider_entry["key_env"] = key_env
                 cfg["providers"] = providers_cfg
                 save_config(cfg)
     else:
-        # Save model name to the custom_providers entry for next time
-        _save_custom_provider(base_url, api_key, model_name)
+        # Save model name to the custom_providers entry for next time.
+        # Never write the resolved secret — only a key that was set directly.
+        _save_custom_provider(base_url, "" if _key_from_env else api_key, model_name)
 
     print(f"\n✅ Model set to: {model_name}")
     print(f"   Provider: {name} ({base_url})")
