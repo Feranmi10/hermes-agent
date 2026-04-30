@@ -2221,6 +2221,11 @@ def resolve_provider_client(
 
         creds = resolve_api_key_provider_credentials(provider)
         api_key = str(creds.get("api_key", "")).strip()
+        # An explicit api_key from a custom_providers fallback entry overrides
+        # the registered credential so the custom endpoint can authenticate even
+        # when no built-in key is configured for this provider alias.
+        if explicit_api_key:
+            api_key = explicit_api_key.strip()
         if not api_key:
             tried_sources = list(pconfig.api_key_env_vars)
             if provider == "copilot":
@@ -2233,6 +2238,13 @@ def resolve_provider_client(
         base_url = _to_openai_base_url(
             str(creds.get("base_url", "")).strip().rstrip("/") or pconfig.inference_base_url
         )
+        # An explicit base_url from a custom_providers fallback entry overrides
+        # the registered provider's default endpoint.  This handles the case
+        # where the fallback provider name aliases to a built-in (e.g. a custom
+        # provider named "kimi" resolves to "kimi-coding") but the actual target
+        # is the user-defined custom endpoint, not the built-in one.
+        if explicit_base_url:
+            base_url = _to_openai_base_url(explicit_base_url.strip().rstrip("/"))
 
         default_model = _API_KEY_PROVIDER_AUX_MODELS.get(provider, "")
         final_model = _normalize_resolved_model(model or default_model, provider)
