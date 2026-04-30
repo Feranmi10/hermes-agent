@@ -7365,6 +7365,27 @@ class AIAgent:
                 fb_key_env = (fb.get("key_env") or "").strip()
                 if fb_key_env:
                     fb_api_key_hint = os.getenv(fb_key_env, "").strip() or None
+            # When the fallback entry has no explicit base_url, look up
+            # custom_providers by the original provider name before any
+            # alias normalization occurs.  Without this, names that alias
+            # to a built-in provider (e.g. "kimi" → "kimi-coding") bypass
+            # the custom_providers lookup and inherit the primary provider's
+            # base_url instead of using the correct custom endpoint.
+            if not fb_base_url_hint:
+                try:
+                    from hermes_cli.runtime_provider import _get_named_custom_provider
+                    _cp_entry = _get_named_custom_provider(fb_provider)
+                    if _cp_entry and _cp_entry.get("base_url"):
+                        fb_base_url_hint = _cp_entry["base_url"].strip() or None
+                        if not fb_api_key_hint:
+                            _cp_key = (_cp_entry.get("api_key") or "").strip()
+                            if not _cp_key:
+                                _cp_key_env = (_cp_entry.get("key_env") or "").strip()
+                                if _cp_key_env:
+                                    _cp_key = os.getenv(_cp_key_env, "").strip()
+                            fb_api_key_hint = _cp_key or None
+                except Exception:
+                    pass
             # For Ollama Cloud endpoints, pull OLLAMA_API_KEY from env
             # when no explicit key is in the fallback config. Host match
             # (not substring) — see GHSA-76xc-57q6-vm5m.
