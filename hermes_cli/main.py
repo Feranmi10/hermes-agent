@@ -3916,6 +3916,28 @@ def _model_flow_kimi(config, current_model=""):
             print()
     else:
         print(f"  {pconfig.name} API key: {existing_key[:8]}... ✓")
+        try:
+            choice = input("  [K]eep / [R]eplace / [C]lear? ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            choice = "k"
+        if choice.startswith("r") and key_env:
+            try:
+                import getpass
+                new_key = getpass.getpass(f"  {key_env}: ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print()
+                new_key = ""
+            if new_key:
+                save_env_value(key_env, new_key)
+                existing_key = new_key
+                print("  API key updated.")
+            else:
+                print("  No change.")
+        elif choice.startswith("c") and key_env:
+            save_env_value(key_env, "")
+            print("  API key cleared.")
+            return
         print()
 
     # Step 2: Auto-detect endpoint from key prefix
@@ -4035,6 +4057,28 @@ def _model_flow_stepfun(config, current_model=""):
             print()
     else:
         print(f"  {pconfig.name} API key: {existing_key[:8]}... ✓")
+        try:
+            choice = input("  [K]eep / [R]eplace / [C]lear? ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            choice = "k"
+        if choice.startswith("r") and key_env:
+            try:
+                import getpass
+                new_key = getpass.getpass(f"  {key_env}: ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print()
+                new_key = ""
+            if new_key:
+                save_env_value(key_env, new_key)
+                existing_key = new_key
+                print("  API key updated.")
+            else:
+                print("  No change.")
+        elif choice.startswith("c") and key_env:
+            save_env_value(key_env, "")
+            print("  API key cleared.")
+            return
         print()
 
     current_base = ""
@@ -4437,6 +4481,28 @@ def _model_flow_api_key_provider(config, provider_id, current_model=""):
             print()
     else:
         print(f"  {pconfig.name} API key: {existing_key[:8]}... ✓")
+        try:
+            choice = input("  [K]eep / [R]eplace / [C]lear? ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            choice = "k"
+        if choice.startswith("r") and key_env:
+            try:
+                import getpass
+                new_key = getpass.getpass(f"  {key_env}: ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print()
+                new_key = ""
+            if new_key:
+                save_env_value(key_env, new_key)
+                existing_key = new_key
+                print("  API key updated.")
+            else:
+                print("  No change.")
+        elif choice.startswith("c") and key_env:
+            save_env_value(key_env, "")
+            print("  API key cleared.")
+            return
         print()
 
     # Gemini free-tier gate: free-tier daily quotas (<= 250 RPD for Flash)
